@@ -1,7 +1,7 @@
 **pyrehol** is a python library for generating [FireHOL](http://firehol.org) config files. It's perfect if you want to combine the human-readable, reproductable, and reliable nature of FireHOL with some kind of automated cluster management system (for example, [clusto](http://clusto.org)) without having to write super-complicated Bash.
 
 ### Usage
-```
+```python
 from pyrehol import Pyrehol
 from somewhere_else import clusto
 
