@@ -1,7 +1,7 @@
 from __future__ import absolute_import
 
 import cStringIO
-import decorator
+import types
 
 __name__ = 'pyrehol'
 __author__ = 'James Brown <jbrown@uber.com>'
@@ -35,6 +35,13 @@ def listify(string_or_list):
         return string_or_list
 
 
+def nameify(name):
+    if name is None:
+        return
+    assert '-' not in name, 'Name may not contain the "-" characeter'
+    assert len(name) < 28, 'For dumb reasons, iptables varibales must be < 28 chars'
+
+
 class Pyrehol(object):
     """Top-level wrapper for a Firehol config"""
     def __init__(self):
@@ -44,6 +51,10 @@ class Pyrehol(object):
         self.version = 5
 
     def emit(self, out_fo=None):
+        """Write out to a file descriptor. If one isn't passed, prints to standard out.
+
+        :param out_fo: A file-like object or None
+        """
         print_it = False
         if out_fo is None:
             out_fo = cStringIO.StringIO()
@@ -82,31 +93,40 @@ class _PyreholChainable(type):
         cls_obj = type.__new__(cls, name, bases, dct)
         if cls_obj.label is not None:
             for kls in cls_obj._addable_from:
-                function_name = 'add_%s' % cls_obj.label
+                if cls_obj._is_setter:
+                    function_name = 'set_%s' % cls_obj.label
+                else:
+                    function_name = 'add_%s' % cls_obj.label
                 if not getattr(kls, function_name, None):
-                    @decorator.decorator
                     def add_thing(self, *args, **kwargs):
                         if isinstance(self, Pyrehol):
                             kwargs['root'] = self
                         else:
                             kwargs['root'] = self.root
+                        if cls_obj._is_setter and getattr(self, 'did_set_%s' % cls_obj.label, False):
+                            raise ValueError('Cannot set %s on the same block more than once' % cls_obj.label)
                         o = cls_obj(*args, **kwargs)
+                        setattr(self, 'set_%s' % cls_obj.label, True)
                         self.contents.append(o)
                         return o
                     add_thing.__name__ = function_name
-                    add_thing.__doc__ = 'Add a new %s to this %s. Returns the %s' % (
-                        cls_obj.label, kls.__name__, name.replace('_', '', 1)
+                    add_thing.__doc__ = '%s %s on this %s. Returns the %s.\n\n' % (
+                        'Set the' if cls_obj._is_setter else 'Add a new',
+                        cls_obj.label, kls.__name__, name.replace('_', '', 1),
                     )
-                    setattr(kls, function_name, add_thing)
+                    if cls_obj.__init__.__doc__:
+                        add_thing.__doc__ += cls_obj.__init__.__doc__
+                    setattr(kls, function_name, types.UnboundMethodType(add_thing, None, kls))
         return cls_obj
 
 
 class _PyreholObject(object):
     __metaclass__ = _PyreholChainable
     _addable_from = tuple()
+    _is_setter = False
     label = None
 
-    def __init__(self, root):
+    def __init__(self, root=None):
         self.root = root
 
     def _w(self, file_object, indent, line):
@@ -118,8 +138,9 @@ class _PyreholObject(object):
 
 
 class _PyreholBlock(_PyreholObject):
-    def __init__(self, name, root):
+    def __init__(self, name, root=None):
         super(_PyreholBlock, self).__init__(root=root)
+        nameify(name)
         self.name = name
         self.contents = []
 
@@ -139,15 +160,18 @@ class _PyreholBlock(_PyreholObject):
 class _PyreholTopLevelBlock(_PyreholBlock):
     _addable_from = (Pyrehol,)
 
-    def __init__(self, name, root):
+    def __init__(self, name, root=None):
         super(_PyreholTopLevelBlock, self).__init__(name, root=root)
         self._before_name = ''
         self._after_name = ''
 
     @property
     def lines(self):
-        yield (0, '%s %s %s %s' % (
-            self.label, self._before_name, self.name, self._after_name
+        yield (0, '%s%s%s %s%s%s' % (
+            self.label,
+            ' ' if self._before_name else '', self._before_name,
+            self.name,
+            ' ' if self._after_name else '', self._after_name
         ))
         for line in super(_PyreholTopLevelBlock, self).lines:
             yield line
@@ -156,7 +180,12 @@ class _PyreholTopLevelBlock(_PyreholBlock):
 class _PyreholRouter(_PyreholTopLevelBlock):
     label = 'router'
 
-    def __init__(self, name, rule_params, root):
+    def __init__(self, name, rule_params, root=None):
+        """Construct a router block
+
+        :param name: Name of this block. Should be suitable to use as a bash variable name
+        :param rule_params: A list of rule paramters (e.g., "inface eth0" or "src 10.0.0.0/8")
+        """
         super(_PyreholInterface, self).__init__(name, root=root)
         self.rule_params = listify(rule_params)
         self._after_name = ' '.join(self.rule_params)
@@ -165,7 +194,12 @@ class _PyreholRouter(_PyreholTopLevelBlock):
 class _PyreholInterface(_PyreholTopLevelBlock):
     label = 'interface'
 
-    def __init__(self, name, interfaces, root):
+    def __init__(self, name, interfaces, root=None):
+        """Construct an interface block
+
+        :param name: Name of this block. Should be suitable to use as a bash variable name
+        :param interfaces: List of interface devices (e.g., "eth0")
+        """
         super(_PyreholInterface, self).__init__(name, root=root)
         self.interfaces = listify(interfaces)
         self._before_name = '"%s"' % ' '.join(self.interfaces)
@@ -175,12 +209,18 @@ class _PyreholGroup(_PyreholBlock):
     _addable_from = (_PyreholBlock,)
     label = 'group'
 
-    def __init__(self, rule_params, root):
+    def __init__(self, rule_params, root=None):
+        """An arbitrary grouping of rules, for efficiency
+
+        :param rule_params: A list of mutating parameters to group by (e.g., "src 10.0.0.0/8")
+        """
         super(_PyreholGroup, self).__init__(name=None, root=root)
         self.rule_params = listify(rule_params)
 
     @property
     def lines(self):
+        if not self.contents:
+            return
         yield (0, 'group with %s' % ' '.join(self.rule_params))
         for thing in self.contents:
             for indent, line in thing.lines:
@@ -198,8 +238,13 @@ class _PyreholStanza(_PyreholObject):
 
 class _PyreholPolicy(_PyreholStanza):
     label = 'policy'
+    _is_setter = True
 
-    def __init__(self, action, root):
+    def __init__(self, action, root=None):
+        """Set the default policy for this block.
+
+        :param action: The default action to take (accept, drop, reject, etc.)
+        """
         super(_PyreholPolicy, self).__init__(root=root)
         self.text = '%s %s' % (self.label, action)
 
@@ -207,8 +252,15 @@ class _PyreholPolicy(_PyreholStanza):
 class _PyreholService(_PyreholStanza):
     _addable_from = (Pyrehol,)
 
-    def __init__(self, name, server_portspec, client_portspec, root):
+    def __init__(self, name, server_portspec, client_portspec, root=None):
+        """A single service
+
+        :param name: A name suitable for use as a bash variable name
+        :param server_portspec: Server portspec (e.g., "tcp/80")
+        :param client_portspec: Client portspec (e.g., "default")
+        """
         super(_PyreholService, self).__init__(root=root)
+        nameify(name)
         self.name = name
         self.server_portspec = tuple(sorted(listify(server_portspec)))
         self.client_portspec = tuple(sorted(listify(client_portspec)))
@@ -237,17 +289,24 @@ class _PyreholServer(_PyreholStanza):
     label = 'server'
 
     def __init__(self, services, action, rule_params=[], root=None):
+        """A server stanza. For communication INPUT to this host.
+
+        :param services: Service name or list of service names (e.g., "http")
+        :param action: Action to take for these services (e.g., "accept")
+        :param rule_params: A list of modifying rule parameters (e.g, "src 10.0.0.0/8")
+        """
         super(_PyreholServer, self).__init__(root=root)
         services = listify(services)
         for service in services:
             assert service in self.root.services, \
                 '%s not defined (missing .define_service call?)' % service
-        self.text = '%s %s%s%s %s %s' % (
+        self.text = '%s %s%s%s %s%s%s' % (
             self.label,
             '"' if len(services) > 1 else '',
             ' '.join(services),
             '"' if len(services) > 1 else '',
             action,
+            ' ' if rule_params else '',
             ' '.join(rule_params),
         )
 
@@ -256,6 +315,12 @@ class _PyreholClient(_PyreholStanza):
     label = 'client'
 
     def __init__(self, services, action, rule_params=[], root=None):
+        """A client stanza. For communication OUTPUT from this host.
+
+        :param services: Service name or list of service names (e.g., "http")
+        :param action: Action to take for these services (e.g., "accept")
+        :param rule_params: A list of modifying rule parameters (e.g, "src 10.0.0.0/8")
+        """
         super(_PyreholClient, self).__init__(root=root)
         services = listify(services)
         for service in services:
@@ -273,19 +338,12 @@ class _PyreholClient(_PyreholStanza):
 
 class _PyreholProtection(_PyreholStanza):
     label = 'protection'
+    _is_setter = True
 
-    def __init__(self, protection_level, root):
+    def __init__(self, protection_level, root=None):
+        """The flood/invalid packet protection level for this block
+
+        :param protection_level: http://firehol.org/firehol-manual/firehol-protection/
+        """
         super(_PyreholProtection, self).__init__(root=root)
         self.text = '%s %s' % (self.label, protection_level)
-
-
-if __name__ == '__main__':
-    p = Pyrehol()
-    eth0 = p.add_interface('foobar', 'eth0')
-    eth0.add_protection('strong')
-    eth0.add_policy('reject')
-    g = eth0.add_group('src 127.0.0.1')
-    g.add_policy('accept')
-    g.add_server('smtp', 'accept')
-    g = eth0.add_group('src 10.0.0.0/8')
-    p.emit()
