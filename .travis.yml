@@ -1,0 +1,8 @@
+language: python
+python:
+    - "2.7"
+install:
+    - "pip install -r requirements-tests.txt"
+script:
+    - "flake8 setup.py pyrehol tests"
+    - "nosetests -s -v --with-cover --cover-package=pyrehol tests"
