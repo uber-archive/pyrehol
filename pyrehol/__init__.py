@@ -49,6 +49,8 @@ class Pyrehol(object):
         self.service_defines = {}
         self.services = set(PREDEFINED_SERVICES)
         self.version = 5
+        self.leader_lines = []
+        self.trailer_lines = []
 
     def emit(self, out_fo=None):
         """Write out to a file descriptor. If one isn't passed, prints to standard out.
@@ -60,12 +62,18 @@ class Pyrehol(object):
             out_fo = cStringIO.StringIO()
             print_it = True
         out_fo.write('version %d\n\n' % self.version)
+        if self.leader_lines:
+            out_fo.write('\n'.join(self.leader_lines))
+            out_fo.write('\n\n')
         for thing in sorted(self.service_defines.values()):
             thing.emit(out_fo)
             out_fo.write('\n')
         for thing in self.contents:
             thing.emit(out_fo)
             out_fo.write('\n')
+        if self.trailer_lines:
+            out_fo.write('\n'.join(self.trailer_lines))
+            out_fo.write('\n\n')
         if print_it:
             print out_fo.getvalue()
 

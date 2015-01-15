@@ -7,6 +7,7 @@ from pyrehol import Pyrehol
 class SmokeTestCase(TestCase):
     def test_basic(self):
         p = Pyrehol()
+        p.leader_lines.append('sysctl -w net.nf_conntrack_max=10')
         eth0 = p.add_interface('foobar', 'eth0')
         eth0.set_protection('strong')
         eth0.set_policy('reject')
@@ -17,6 +18,8 @@ class SmokeTestCase(TestCase):
         s = StringIO()
         p.emit(s)
         expected = """version 5
+
+sysctl -w net.nf_conntrack_max=10
 
 interface "eth0" foobar
   protection strong
