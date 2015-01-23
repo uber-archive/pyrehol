@@ -18,7 +18,7 @@ PREDEFINED_SERVICES = frozenset([
     'gkrellmd', 'GRE', 'h323', 'heartbeat', 'http', 'https', 'iax', 'iax2',
     'icmp', 'ICMP', 'icp', 'ident', 'imap', 'imaps', 'irc', 'isakmp',
     'jabber', 'jabberd', 'ldap', 'ldaps', 'lpd', 'mms', 'msn', 'msnp',
-    'mysql', 'netbackup', 'nntp', 'nntps', 'ntp', 'nut', 'nxserver', 'openvpn',
+    'mysql', 'netbackup', 'nfs', 'nntp', 'nntps', 'ntp', 'nut', 'nxserver', 'openvpn',
     'oracle', 'OSPF', 'pop3', 'pop3s', 'portmap', 'postgres', 'privoxy',
     'radius', 'radiusold', 'radiusoldproxy', 'radiusproxy', 'rdp', 'rndc',
     'rsync', 'rtp', 'sip', 'smtp', 'smtps', 'snmp', 'snmptrap', 'socks',
