@@ -5,7 +5,7 @@ import types
 
 __name__ = 'pyrehol'
 __author__ = 'James Brown <jbrown@uber.com>'
-version_info = (0, 2)
+version_info = (0, 3)
 __version__ = '.'.join(map(str, version_info))
 
 INDENT_CHAR = '  '
